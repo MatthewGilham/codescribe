@@ -6,7 +6,7 @@
 ![Gradio](https://img.shields.io/badge/Gradio-UI-F97316)
 ![OpenRouter](https://img.shields.io/badge/OpenRouter-LLM%20API-39FF14)
 
-![CodeScribe screenshot](assets/screenshot.png)
+![CodeScribe screenshot](assets/screenshot1.png)
 
 ---
 
