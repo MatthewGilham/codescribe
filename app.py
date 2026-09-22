@@ -1,16 +1,16 @@
 # imports
 
 import os
-import io
-import sys
 from dotenv import load_dotenv
 from openai import OpenAI
 import gradio as gr
-import subprocess
 from IPython.display import Markdown, display
 from prompts import build_messages
 import ast
 import time
+import difflib
+from theme import THEME, CSS
+
 
 
 
@@ -24,7 +24,6 @@ if openrouter_api_key:
     print(f"OpenRouter API Key exists and begins {openrouter_api_key[:6]}")
 
 # Connect to client libraries
-openai = OpenAI()
 openrouter_url = "https://openrouter.ai/api/v1"
 openrouter = OpenAI(api_key=openrouter_api_key, base_url=openrouter_url)
 MODELS = {
@@ -96,6 +95,26 @@ def check_logic(original, documented):
         return "Logic has changed beware"
     
 
+def make_diff(original, documented):
+    result = []
+    for line in difflib.ndiff(original.splitlines(), documented.splitlines()):
+        label = line[:2]      # the first two characters: "+ ", "- ", "  " or "? "
+        text = line[2:] + "\n"  # everything after them, plus a new line
+
+        if label == "? ":
+            continue
+        elif label == "+ ":
+            result.append((text, "+"))
+        elif label == "- ":
+            result.append((text, "-"))
+        else:
+            result.append((text, None))
+
+
+    return result
+
+
+
 def generate(code, model_name):
     """Generate documentation for the provided code using the OpenRouter API.
 
@@ -122,8 +141,7 @@ def generate(code, model_name):
         if chunk.choices and chunk.choices[0].delta.content:
             for char in chunk.choices[0].delta.content:
                 reply += char
-                yield reply, None, "Generating..."
-                time.sleep(0.005)
+                yield reply, None, "Generating...", None
         if chunk.usage:
             usage = chunk.usage
     elapsed = time.perf_counter() - start
@@ -142,38 +160,63 @@ def generate(code, model_name):
     output_cost = completion_tokens / 1_000_000 * output_price
     cost = input_cost + output_cost
     logic_tokenscost = f"{logic}  ·     Cost: ${cost:.4f}     ·     Time Taken:{elapsed:.2f} seconds   "
-    yield text, path, logic_tokenscost
+
+
+    yield text, path, logic_tokenscost, make_diff(code, text)
 
 def load_file(path):
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         text = f.read()
     return text
 
 
-css = """
-.code-box { min-height: 650px; }
-.code-box .cm-editor { height: 600px; }
-.code-box .cm-scroller { overflow: auto; }
-"""
+example_files = ["examples/example1.py", "examples/example2.py", "examples/example3.py"]
 
-with gr.Blocks(fill_width=True, css=css) as ui:
-    status = gr.Markdown()
-    model_dropdown = gr.Dropdown(
-        choices=list(MODELS.keys()),
-        value="Gemini 3.5 Flash Lite",
-        label="Model"
-    )
+examples = []
+for file in example_files:
+    examples.append([load_file(file)])
+
+with gr.Blocks(fill_width=True, title="CodeScribe") as ui:
+    with gr.Row(elem_classes="header-row"):
+        with gr.Column(scale=3):
+            gr.Markdown(
+                "# CodeScribe\nAI-generated docstrings and comments for your Python code",
+                elem_classes="app-header",
+            )
+        with gr.Column(scale=1):
+            model_dropdown = gr.Dropdown(
+                choices=list(MODELS.keys()),
+                value="Gemini 3.5 Flash Lite",
+                label="Model",
+            )
+    status = gr.Markdown(elem_classes="status-line")
     with gr.Row():
-        code_box = gr.Code(language="python", label="Your code", elem_classes="code-box")
-        output_box = gr.Code(language="python", label="Documented code", elem_classes="code-box")
+        with gr.Tabs():
+            with gr.Tab("Your code"):
+                code_box = gr.Code(language="python", show_label=False, elem_classes="code-box")
+        with gr.Tabs():
+            with gr.Tab("Documented code"):
+                output_box = gr.Code(language="python", show_label=False, elem_classes="code-box")
+            with gr.Tab("Changes"):
+                diff_view = gr.HighlightedText(
+                    show_label=False,
+                    color_map={"+": "#39ff14", "-": "#ff3860"},
+                    combine_adjacent=True,
+                    elem_classes="diff-box",
+                )
     with gr.Row():
         upload = gr.UploadButton("Upload .py", file_types=[".py"], variant="secondary")
         go = gr.Button("Generate", variant="primary")
         download = gr.DownloadButton("Download", variant="secondary")
+    gr.Examples(
+        examples=examples,
+        inputs=[code_box],
+        example_labels=["Turtle dot painting", "Quiz game", "Calculator"],
+    )
 
-    go.click(generate, inputs=[code_box, model_dropdown], outputs=[output_box, download, status])
+    go.click(generate, inputs=[code_box, model_dropdown], outputs=[output_box, download, status, diff_view])
     upload.upload(load_file, inputs=upload, outputs=code_box)
     
 
-ui.launch(inbrowser=True)
+ui.launch(inbrowser=True, theme=THEME, css=CSS)
 
